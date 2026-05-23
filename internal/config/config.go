@@ -37,10 +37,10 @@ var ErrInvalidHTTPPort = errors.New("MCP_HTTP_PORT must be a valid port number (
 var ErrInvalidHTTPHost = errors.New("MCP_HTTP_HOST must be a valid host (IP, hostname, or 'localhost')")
 
 // Config holds the application configuration loaded from environment variables.
+// Credentials (godname, userkey) are NOT loaded from env on purpose: the
+// only supported credential flow is interactive MCP elicitation.
 type Config struct {
 	APIBase  string
-	Godname  string
-	Userkey  string
 	CacheTTL time.Duration
 	HTTPPort string
 	HTTPHost string
@@ -65,22 +65,10 @@ func Load() (*Config, error) {
 
 	return &Config{
 		APIBase:  loadAPIBase(),
-		Godname:  os.Getenv("GODVILLE_GODNAME"),
-		Userkey:  os.Getenv("GODVILLE_USERKEY"),
 		CacheTTL: cacheTTL,
 		HTTPPort: httpPort,
 		HTTPHost: httpHost,
 	}, nil
-}
-
-// HasGodname returns true if godname is configured.
-func (cfg *Config) HasGodname() bool {
-	return cfg.Godname != ""
-}
-
-// HasUserkey returns true if a userkey is configured (enables private API fields).
-func (cfg *Config) HasUserkey() bool {
-	return cfg.Userkey != ""
 }
 
 // HTTPEnabled returns true if HTTP transport should be enabled.

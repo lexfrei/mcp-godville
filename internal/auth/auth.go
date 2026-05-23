@@ -1,5 +1,6 @@
 // Package auth resolves Godville credentials (godname + optional userkey)
-// via a cascade: configured env values → MCP elicitation → error/public-mode.
+// via interactive MCP elicitation. Env vars are deliberately not supported
+// for credentials — the only credential flow is the MCP elicitation prompt.
 //
 // Single-tenant by design: the Authenticator caches resolved credentials
 // process-wide and serves the same hero to every caller for the life of the
@@ -20,7 +21,7 @@ import (
 )
 
 // ErrGodnameRequired is returned when no godname can be obtained.
-var ErrGodnameRequired = errors.New("godname is required: set GODVILLE_GODNAME or accept the elicitation prompt")
+var ErrGodnameRequired = errors.New("godname is required: accept the MCP elicitation prompt")
 
 // Elicitor is the interface the MCP session must satisfy to request a value
 // from the user. Implementations return (value, accepted, error) — accepted
@@ -33,9 +34,6 @@ type Elicitor interface {
 // Concurrent first-call elicitations are coalesced via singleflight so the
 // user only sees one prompt per credential.
 type Authenticator struct {
-	envGodname string
-	envUserkey string
-
 	mu sync.Mutex
 
 	elicitor      Elicitor
@@ -55,21 +53,16 @@ type Authenticator struct {
 	group singleflight.Group
 }
 
-// NewAuthenticator creates an Authenticator with env-sourced credentials.
-// Either may be empty; missing values are resolved on first access via
-// elicitation, if an Elicitor is configured.
-//
-// By default no elicitor is expected — Godname returns ErrGodnameRequired
-// immediately when env is empty, Userkey falls through to public mode. Call
-// ExpectElicitor() BEFORE server.Connect to arm the race-window guard, then
-// SetElicitor() after Connect to land the actual elicitor.
-func NewAuthenticator(envGodname, envUserkey string) *Authenticator {
+// NewAuthenticator creates an Authenticator that resolves credentials via
+// MCP elicitation. By default no elicitor is expected — Godname returns
+// ErrGodnameRequired immediately, Userkey falls through to public mode.
+// Call ExpectElicitor() BEFORE server.Connect to arm the race-window guard,
+// then SetElicitor() after the client finishes the MCP handshake.
+func NewAuthenticator() *Authenticator {
 	ready := make(chan struct{})
 	close(ready) // default: no elicitor expected, do not block awaiters
 
 	return &Authenticator{
-		envGodname:    strings.TrimSpace(envGodname),
-		envUserkey:    strings.TrimSpace(envUserkey),
 		elicitorReady: ready,
 	}
 }
@@ -113,9 +106,9 @@ func (aut *Authenticator) SetElicitor(elicitor Elicitor) {
 	aut.mu.Unlock()
 }
 
-// Godname returns the configured godname, falling back to elicitation if not
-// set in the environment. Missing godname is fatal (the API path requires it).
-// Decline does not stick — the user gets a fresh prompt on the next call.
+// Godname returns the configured godname, resolving via elicitation if
+// necessary. Missing godname is fatal (the API path requires it). Decline
+// does not stick — the user gets a fresh prompt on the next call.
 func (aut *Authenticator) Godname(ctx context.Context) (string, error) {
 	if val, ok := aut.cachedGodname(); ok {
 		return val, nil
@@ -141,11 +134,11 @@ func (aut *Authenticator) Godname(ctx context.Context) (string, error) {
 	return str, nil
 }
 
-// Userkey returns the configured userkey, falling back to elicitation if not
-// set. A declined or empty result is NOT an error — it just disables private
-// API fields. Decline is sticky to avoid re-prompting for an optional value.
-// A transport failure during elicitation IS surfaced — callers must
-// distinguish "user said no" from "we never reached the user".
+// Userkey returns the configured userkey, resolving via elicitation if
+// necessary. A declined or empty result is NOT an error — it just disables
+// private API fields. Decline is sticky to avoid re-prompting for an
+// optional value. A transport failure during elicitation IS surfaced —
+// callers must distinguish "user said no" from "we never reached the user".
 func (aut *Authenticator) Userkey(ctx context.Context) (string, error) {
 	if val, ok := aut.cachedUserkey(); ok {
 		return val, nil
@@ -180,21 +173,14 @@ func (aut *Authenticator) Userkey(ctx context.Context) (string, error) {
 	return str, nil
 }
 
-// cachedGodname returns (value, true) if godname is already resolved or if
-// the env source can populate it. Otherwise (_, false) to signal elicitation.
+// cachedGodname returns (value, true) if godname is already resolved.
+// Otherwise (_, false) to signal elicitation.
 func (aut *Authenticator) cachedGodname() (string, bool) {
 	aut.mu.Lock()
 	defer aut.mu.Unlock()
 
 	if aut.godnameDone {
 		return aut.resolvedGodname, true
-	}
-
-	if aut.envGodname != "" {
-		aut.resolvedGodname = aut.envGodname
-		aut.godnameDone = true
-
-		return aut.envGodname, true
 	}
 
 	return "", false
@@ -206,13 +192,6 @@ func (aut *Authenticator) cachedUserkey() (string, bool) {
 
 	if aut.userkeyDone {
 		return aut.resolvedUserkey, true
-	}
-
-	if aut.envUserkey != "" {
-		aut.resolvedUserkey = aut.envUserkey
-		aut.userkeyDone = true
-
-		return aut.envUserkey, true
 	}
 
 	return "", false
@@ -256,7 +235,7 @@ func (aut *Authenticator) elicitGodname(ctx context.Context, elicitor Elicitor) 
 	}
 
 	got, accepted, err := elicitor.Elicit(ctx, "godname",
-		"Enter the Godville god name (GODVILLE_GODNAME)")
+		"Enter the Godville god name")
 	if err != nil {
 		return "", errors.Wrap(err, "godname elicitation")
 	}
@@ -281,7 +260,7 @@ func (aut *Authenticator) elicitUserkey(ctx context.Context, elicitor Elicitor) 
 	}
 
 	got, accepted, err := elicitor.Elicit(ctx, "userkey",
-		"Enter the Godville userkey for private API access (optional, GODVILLE_USERKEY)")
+		"Enter the Godville userkey for private API access (optional; leave blank for public mode)")
 	if err != nil {
 		return "", errors.Wrap(err, "userkey elicitation")
 	}

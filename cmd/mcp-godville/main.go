@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 
@@ -66,7 +67,7 @@ func run() error {
 
 	client := godville.NewClient(cfg.APIBase)
 	cache := godville.NewCache(client, cfg.CacheTTL)
-	authenticator := auth.NewAuthenticator(cfg.Godname, cfg.Userkey)
+	authenticator := auth.NewAuthenticator()
 	// Arm the race-window guard BEFORE server.Connect: any tool call that
 	// lands between Connect returning and SetElicitor blocks in
 	// awaitElicitor instead of failing with ErrGodnameRequired.
@@ -74,7 +75,8 @@ func run() error {
 
 	provider := heroservice.New(authenticator, cache)
 
-	server := newServer(logger)
+	initDone := make(chan struct{})
+	server := newServer(logger, initDone)
 	tools.Register(server, provider, version, revision, runtime.Version())
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -87,17 +89,23 @@ func run() error {
 		return errors.Wrap(connectErr, "connecting stdio transport")
 	}
 
+	// Wait for the client to finish MCP handshake (initialized notification)
+	// before we start emitting server→client requests like elicitation/create.
+	// Without this, an early elicit can race the handshake and fail.
+	select {
+	case <-initDone:
+	case <-ctx.Done():
+		return errors.Wrap(ctx.Err(), "waiting for client initialization")
+	}
+
 	authenticator.SetElicitor(&sessionElicitor{session: stdioSession})
 
-	// HTTP transport is single-tenant by design — it shares the one set of
-	// credentials elicited via stdio (or set via env). Warn loudly when HTTP
-	// is enabled without env credentials so the operator knows the only path
-	// to resolve them is the stdio peer.
-	if cfg.HTTPEnabled() && !cfg.HasGodname() {
-		logger.Warn(
-			"HTTP transport enabled without GODVILLE_GODNAME — " +
-				"set credentials via env, since HTTP callers cannot elicit themselves",
-		)
+	// Eager credential resolution — same UX as mcp-tg: the elicitation prompt
+	// appears at startup. A user decline is NOT fatal; the lazy path will
+	// re-prompt on the next tool call. Only transport-class errors short the
+	// process out.
+	if eagerErr := resolveCredentialsEagerly(ctx, authenticator, logger); eagerErr != nil {
+		return eagerErr
 	}
 
 	// The HTTP transport has no authentication; bind scope is the only
@@ -112,14 +120,12 @@ func run() error {
 		)
 	}
 
-	if !cfg.HasUserkey() {
-		logger.Info("running in public mode (no GODVILLE_USERKEY) — private fields will be empty")
-	}
-
 	return waitForTransports(ctx, cancel, server, stdioSession, cfg)
 }
 
-func newServer(logger *slog.Logger) *mcp.Server {
+func newServer(logger *slog.Logger, initDone chan<- struct{}) *mcp.Server {
+	var once sync.Once
+
 	return mcp.NewServer(
 		&mcp.Implementation{
 			Name:    serverName,
@@ -128,12 +134,49 @@ func newServer(logger *slog.Logger) *mcp.Server {
 		&mcp.ServerOptions{
 			Instructions: "MCP server for the Godville public/private API. " +
 				"Tools surface hero status, diary, inventory, pet, quest, progress, " +
-				"clan and raw payload. Set GODVILLE_GODNAME (and optionally GODVILLE_USERKEY) " +
-				"via env or via the elicitation prompt. Data is cached for 60s by default.",
+				"clan and raw payload. The godname and (optional) userkey are " +
+				"resolved via interactive MCP elicitation at startup. Data is cached " +
+				"for 60s by default.",
 			Logger:    logger,
 			KeepAlive: keepAliveInterval,
+			InitializedHandler: func(_ context.Context, _ *mcp.InitializedRequest) {
+				once.Do(func() { close(initDone) })
+			},
 		},
 	)
+}
+
+// resolveCredentialsEagerly drives the elicitation prompt at startup rather
+// than on the first tool call. The user decline path is NOT fatal — the
+// authenticator's lazy path re-prompts on the next tool call, so an
+// accidental "Decline" click does not kill the server. Only a transport-
+// class failure aborts startup.
+func resolveCredentialsEagerly(
+	ctx context.Context,
+	authenticator *auth.Authenticator,
+	logger *slog.Logger,
+) error {
+	_, godErr := authenticator.Godname(ctx)
+	if godErr != nil {
+		if errors.Is(godErr, auth.ErrGodnameRequired) {
+			logger.Warn("godname not provided at startup; will re-prompt on the first tool call")
+
+			return nil
+		}
+
+		return errors.Wrap(godErr, "resolve godname at startup")
+	}
+
+	userkey, userErr := authenticator.Userkey(ctx)
+	if userErr != nil {
+		return errors.Wrap(userErr, "resolve userkey at startup")
+	}
+
+	if userkey == "" {
+		logger.Info("running in public mode (no userkey) — private fields will be empty")
+	}
+
+	return nil
 }
 
 func waitForTransports(
