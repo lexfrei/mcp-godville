@@ -13,13 +13,13 @@ MCP server for the [Godville](https://godville.net) zero-player game API. Lets L
 - **Diary access** — last diary entry and "third eye" log line (requires userkey).
 - **Raw payload** — escape hatch tool exposing the full Godville JSON for anything not yet modelled.
 - **In-memory cache** — Godville data updates once per minute upstream and enforces a 30 req / 10 min rate limit per (god+ip). With the default 60s TTL the worst case is 1 fetch per minute per (godname, userkey) = 10 fetches per 10-minute window per credential = 1/3 of the budget for a single hero. Concurrent tool calls coalesce via singleflight so a 9-tool LLM burst is one upstream fetch, not nine.
-- **Two-mode auth** — credentials from env or MCP elicitation. Without a userkey, public-only fields are exposed; with one, private fields appear too.
+- **Interactive auth at startup** — the godname and (optional) userkey are resolved via MCP elicitation right after the client connects, same UX as `mcp-tg`. There is no env-based credential fallback by design: the only way to provide credentials is the MCP prompt. Without a userkey, public-only fields are exposed; with one, private fields appear too.
 - **Multi-arch images** — `linux/amd64` and `linux/arm64`, signed with cosign keyless.
 - **Both Godville variants** — Russian (default) and English via `GODVILLE_API_BASE`.
 
 ## Quick Start
 
-By default the server resolves the godname and (optional) userkey via interactive **MCP elicitation** on the first tool call — same flow as `mcp-tg`. The MCP client prompts the user in-place; nothing needs to be pre-configured. Env vars are a non-interactive alternative for headless / CI deployments.
+Credentials are resolved via MCP elicitation at startup — the same UX as `mcp-tg`. The MCP client prompts the user for the godname (required) and userkey (optional, leave blank for public mode) right after the handshake completes. There are no env-based credential variables.
 
 ### Container (Podman/Docker)
 
@@ -30,7 +30,7 @@ By default the server resolves the godname and (optional) userkey via interactiv
       "command": "podman",
       "args": [
         "run", "--rm", "-i",
-        "ghcr.io/lexfrei/mcp-godville:0.1.0"
+        "ghcr.io/lexfrei/mcp-godville:0.2.0"
       ]
     }
   }
@@ -38,9 +38,7 @@ By default the server resolves the godname and (optional) userkey via interactiv
 ```
 
 > Claude Code's project-level `.mcp.json` uses a flat top-level (`{"mcp-godville": {...}}`) instead of the `mcpServers` wrapper shown above — see the repo's `.mcp.json` for that shape. Other MCP clients (Cursor, Claude Desktop, etc.) use the `mcpServers` form. Pick whichever matches your client.
-
-The first tool call triggers elicitation: the client asks for the god name, then (optionally) the userkey. To skip the prompts, pass `-e GODVILLE_GODNAME=YourGod -e GODVILLE_USERKEY=your-key` in `args` — the server uses env values when set and only elicits the missing pieces.
-
+>
 > Pin a numeric version tag (not `:latest`) — `:latest` can be retagged on top of any image after the fact, defeating the cosign supply-chain assertion shown in the Verification section. The `latest` tag is published for convenience only; production deployments should pin.
 
 ### Go Install
@@ -59,22 +57,20 @@ go install github.com/lexfrei/mcp-godville/cmd/mcp-godville@latest
 }
 ```
 
-Same elicitation flow as the container example. Override with `env.GODVILLE_GODNAME` / `env.GODVILLE_USERKEY` to skip the interactive prompts.
+Same elicitation flow as the container example.
 
 ## Configuration
 
-All configuration is via environment variables. Both credentials may also be supplied interactively through MCP elicitation if not pre-configured.
+All configuration is via environment variables. **Credentials are NOT env vars** — they come through MCP elicitation only.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GODVILLE_GODNAME` | Yes (env or elicit) | — | Hero's god name (URL path segment) |
-| `GODVILLE_USERKEY` | No | — | Userkey for private API fields (diary, quest, health) |
 | `GODVILLE_API_BASE` | No | `https://godville.net` | API base URL. Use `https://godvillegame.com` for the English variant |
 | `GODVILLE_CACHE_TTL` | No | `60s` | In-memory cache TTL (Go duration). Anything ≤60s wastes calls — upstream only refreshes once a minute |
 | `MCP_HTTP_PORT` | No | — | Enable HTTP transport on this port (in addition to stdio). The HTTP transport has **no built-in authentication** — bind scope is the only access control. When running in a container, publish with `-p 127.0.0.1:PORT:PORT` (not `-p PORT:PORT`, which would bind to `0.0.0.0` on the host network) |
 | `MCP_HTTP_HOST` | No | `127.0.0.1` | HTTP bind address |
 
-> **HTTP transport is single-tenant.** It shares the credentials elicited via the stdio peer (or set via env) — all HTTP callers see the same hero. There is no per-caller credential elicitation. When enabling HTTP, prefer setting `GODVILLE_GODNAME` (and optionally `GODVILLE_USERKEY`) via env so the credentials are resolved before any HTTP request arrives.
+> **HTTP transport is single-tenant.** It shares the credentials elicited via the stdio peer — all HTTP callers see the same hero. There is no per-caller credential elicitation, so HTTP-only deployments without a stdio peer can't authenticate. Run with stdio attached (the default `docker run -i` shape) so the elicitation prompt has somewhere to land.
 
 ### Public vs Private mode
 
@@ -134,7 +130,7 @@ internal/godville/                HTTP client + types + in-memory cache
   client.go                       GetHero(godname, userkey) → *Hero
   types.go                        Hero/Pet/ErrorPayload + raw payload preservation
   cache.go                        Per-(godname,userkey) TTL cache + singleflight
-internal/auth/                    Credential resolution: env → MCP elicitation → error/public
+internal/auth/                    Credential resolution: MCP elicitation only (no env)
 internal/heroservice/             Glue between auth and cache; implements tools.HeroProvider
 internal/tools/                   MCP tool handlers (one file per tool + test)
 ```
@@ -161,7 +157,7 @@ Container images are signed with cosign keyless signing:
 # ":latest" can be re-tagged on top of any image after the fact.
 # NOTE: docker/metadata-action's semver pattern strips the "v" prefix,
 # so git tag v0.1.0 → image tag 0.1.0 (no "v").
-cosign verify ghcr.io/lexfrei/mcp-godville:0.1.0 \
+cosign verify ghcr.io/lexfrei/mcp-godville:0.2.0 \
   --certificate-identity-regexp='^https://github\.com/lexfrei/mcp-godville/' \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com
 ```

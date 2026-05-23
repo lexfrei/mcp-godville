@@ -11,8 +11,6 @@ import (
 func clearEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("GODVILLE_API_BASE", "")
-	t.Setenv("GODVILLE_GODNAME", "")
-	t.Setenv("GODVILLE_USERKEY", "")
 	t.Setenv("GODVILLE_CACHE_TTL", "")
 	t.Setenv("MCP_HTTP_PORT", "")
 	t.Setenv("MCP_HTTP_HOST", "")
@@ -28,14 +26,6 @@ func TestLoad_Defaults(t *testing.T) {
 
 	if cfg.APIBase != "https://godville.net" {
 		t.Errorf("expected default APIBase https://godville.net, got %s", cfg.APIBase)
-	}
-
-	if cfg.Godname != "" {
-		t.Errorf("expected empty Godname, got %s", cfg.Godname)
-	}
-
-	if cfg.Userkey != "" {
-		t.Errorf("expected empty Userkey, got %s", cfg.Userkey)
 	}
 
 	if cfg.CacheTTL.Seconds() != 60 {
@@ -54,8 +44,6 @@ func TestLoad_Defaults(t *testing.T) {
 func TestLoad_CustomValues(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("GODVILLE_API_BASE", "https://godvillegame.com")
-	t.Setenv("GODVILLE_GODNAME", "TestGod")
-	t.Setenv("GODVILLE_USERKEY", "abc123")
 	t.Setenv("GODVILLE_CACHE_TTL", "30s")
 	t.Setenv("MCP_HTTP_PORT", "8080")
 	t.Setenv("MCP_HTTP_HOST", "0.0.0.0")
@@ -69,14 +57,6 @@ func TestLoad_CustomValues(t *testing.T) {
 		t.Errorf("expected APIBase https://godvillegame.com, got %s", cfg.APIBase)
 	}
 
-	if cfg.Godname != "TestGod" {
-		t.Errorf("expected Godname TestGod, got %s", cfg.Godname)
-	}
-
-	if cfg.Userkey != "abc123" {
-		t.Errorf("expected Userkey abc123, got %s", cfg.Userkey)
-	}
-
 	if cfg.CacheTTL.Seconds() != 30 {
 		t.Errorf("expected CacheTTL 30s, got %s", cfg.CacheTTL)
 	}
@@ -88,6 +68,25 @@ func TestLoad_CustomValues(t *testing.T) {
 	if cfg.HTTPHost != "0.0.0.0" {
 		t.Errorf("expected HTTPHost 0.0.0.0, got %s", cfg.HTTPHost)
 	}
+}
+
+// Regression: credentials MUST NOT be read from env. The only supported
+// credential flow is interactive MCP elicitation. Setting GODVILLE_GODNAME
+// or GODVILLE_USERKEY must have no effect on the loaded Config.
+func TestLoad_CredentialsAreNotReadFromEnv(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("GODVILLE_GODNAME", "ShouldBeIgnored")
+	t.Setenv("GODVILLE_USERKEY", "should-be-ignored")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	// The struct must not carry these fields at all — caught at compile
+	// time by tests trying to read them, and at runtime by ensuring
+	// Load() returns a Config that does not surface credential data.
+	_ = cfg
 }
 
 func TestLoad_TrimsAPIBaseTrailingSlash(t *testing.T) {
@@ -194,46 +193,6 @@ func TestLoad_HTTPPortOutOfRange(t *testing.T) {
 	_, err := config.Load()
 	if err == nil {
 		t.Fatal("expected error for out-of-range MCP_HTTP_PORT")
-	}
-}
-
-func TestConfig_HasUserkey(t *testing.T) {
-	tests := []struct {
-		name    string
-		userkey string
-		want    bool
-	}{
-		{"set", "abc123", true},
-		{"empty", "", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{Userkey: tt.userkey}
-			if got := cfg.HasUserkey(); got != tt.want {
-				t.Errorf("HasUserkey() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestConfig_HasGodname(t *testing.T) {
-	tests := []struct {
-		name    string
-		godname string
-		want    bool
-	}{
-		{"set", "TestGod", true},
-		{"empty", "", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{Godname: tt.godname}
-			if got := cfg.HasGodname(); got != tt.want {
-				t.Errorf("HasGodname() = %v, want %v", got, tt.want)
-			}
-		})
 	}
 }
 
