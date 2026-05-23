@@ -1,0 +1,9 @@
+{
+  "mcp-godville": {
+    "command": "docker",
+    "args": [
+      "run", "--rm", "-i",
+      "ghcr.io/lexfrei/mcp-godville:0.1.0"
+    ]
+  }
+}
