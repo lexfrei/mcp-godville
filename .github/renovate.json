@@ -1,68 +1,25 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "platformAutomerge": true,
-  "automergeStrategy": "squash",
-  "extends": [
-    "config:recommended",
-    "docker:enableMajor",
-    ":separateMajorReleases",
-    ":prHourlyLimitNone",
-    ":prConcurrentLimitNone"
-  ],
-  "labels": ["dependencies"],
+  "extends": ["github>lexfrei/renovate-config"],
   "rangeStrategy": "pin",
-  "postUpdateOptions": ["gomodTidy"],
   "packageRules": [
     {
-      "description": "Group all Go module updates",
+      "description": "Group all Go module updates into one PR",
       "matchManagers": ["gomod"],
       "groupName": "go modules",
       "groupSlug": "go-modules"
     },
     {
-      "description": "Group all GitHub Actions updates",
+      "description": "Group all GitHub Actions updates into one PR",
       "matchManagers": ["github-actions"],
       "groupName": "github actions",
       "groupSlug": "github-actions"
     },
     {
-      "description": "Automerge patch updates for Go modules",
-      "matchManagers": ["gomod"],
-      "matchUpdateTypes": ["patch"],
-      "automerge": true
-    },
-    {
-      "description": "Automerge all GitHub Actions updates including major",
-      "matchManagers": ["github-actions"],
-      "automerge": true
-    },
-    {
-      "description": "Pin Go version in Containerfile",
+      "description": "Pin the Go base image in the Containerfile using docker versioning",
       "matchManagers": ["dockerfile"],
       "matchPackageNames": ["docker.io/library/golang"],
       "versioning": "docker"
-    }
-  ],
-  "customManagers": [
-    {
-      "customType": "regex",
-      "description": "Update Go version in GitHub Actions",
-      "fileMatch": ["^\\.github/workflows/.*\\.ya?ml$"],
-      "matchStrings": [
-        "go-version:\\s*['\"]?(?<currentValue>[\\d.]+)['\"]?"
-      ],
-      "depNameTemplate": "golang",
-      "datasourceTemplate": "golang-version"
-    },
-    {
-      "customType": "regex",
-      "description": "Update Go version directive in go.mod",
-      "fileMatch": ["(^|/)go\\.mod$"],
-      "matchStrings": [
-        "^go (?<currentValue>[\\d.]+)$"
-      ],
-      "depNameTemplate": "golang",
-      "datasourceTemplate": "golang-version"
     }
   ]
 }
