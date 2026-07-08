@@ -1,11 +1,11 @@
 module github.com/lexfrei/mcp-godville
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/cockroachdb/errors v1.14.0
 	github.com/modelcontextprotocol/go-sdk v1.6.1
-	golang.org/x/sync v0.21.0
+	golang.org/x/sync v0.22.0
 )
 
 require (
