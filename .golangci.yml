@@ -5,10 +5,12 @@ linters:
   disable:
     - depguard
     - exhaustruct
+    - exhaustruct_v5
     - ireturn
     - wsl
     - tagliatelle
     - gomodguard
+    - gomodguard_v2
   settings:
     dupl:
       threshold: 100
