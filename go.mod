@@ -5,7 +5,7 @@ go 1.27.2
 require (
 	github.com/cockroachdb/errors v1.14.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	golang.org/x/sync v0.23.0
+	golang.org/x/sync v0.24.0
 )
 
 require (
