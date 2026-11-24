@@ -120,7 +120,7 @@ func run() error {
 		)
 	}
 
-	return waitForTransports(ctx, cancel, server, stdioSession, cfg)
+	return waitForTransports(ctx, cancel, server, stdioSession, cfg, logger)
 }
 
 func newServer(logger *slog.Logger, initDone chan<- struct{}) *mcp.Server {
@@ -185,6 +185,7 @@ func waitForTransports(
 	server *mcp.Server,
 	stdioSession *mcp.ServerSession,
 	cfg *config.Config,
+	logger *slog.Logger,
 ) error {
 	if !cfg.HTTPEnabled() {
 		// Close stdio on ctx cancellation: stdioSession.Wait reads stdin
@@ -231,7 +232,9 @@ func waitForTransports(
 	// the session explicitly so the second errCh receive completes.
 	_ = stdioSession.Close()
 
-	<-errCh
+	if secondErr := <-errCh; secondErr != nil {
+		logger.Warn("second transport ended with error", "error", secondErr)
+	}
 
 	return first
 }
